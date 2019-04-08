@@ -1,0 +1,12 @@
+Package: CNH-energy
+Type: Open assessment
+Title: Energy assessment model for carbon neutral Helsinki
+Version: 0.1
+Author: Jouni Tuomisto
+Maintainer: Jouni Tuomisto <jouni.tuomisto@thl.fi>
+Description: Contains models and data for impact assessment and energy balance using OpasnetUtils package functionalities.
+ (see <http://en.opasnet.org/w/Main_Page> for more information).
+Imports: OpasnetUtils
+License: GPL-3
+LazyLoad: yes
+URL: http://github.com/jtuomisto/CNH-energy
