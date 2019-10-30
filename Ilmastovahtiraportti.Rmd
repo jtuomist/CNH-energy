@@ -1,0 +1,155 @@
+---
+title: "Hiilineutraali Helsinki -seurantaraportti"
+author: "Jouni Tuomisto"
+date: "30 lokakuuta 2019"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Hiilineutraali Helsinki 2035 -seurantaraportti perustuen Ilmastovahdin tietoihin
+
+Tähän dokumenttiin on kerätty ajankohtaisia tietoja Helsingin ilmastotoimenpiteistä ja kasvihuonekaasupäästöistä. Tiedot perustuvat Ilmastovahdissa olevaan dataan, ja tämä raportti on tuotettu suoraan avoimella koodilla, joka löytyy sivulta https://github.com/jtuomist/CNH-energy/raw/master/Ilmastovahtiraportti.docx. Itse koodi löytyy linkistä https://github.com/jtuomist/CNH-energy/Ilmastovahtiraportti.Rmd.
+
+```{r preprocess, echo=FALSE}
+library(jsonlite)
+library(ggplot2)
+
+inds <- c(5, 24, 25, 30, 66, 100, 283, 284) # Numbers of key strategic indicators
+
+values <- data.frame()
+for(i in inds) {
+  tmp <- tryCatch(
+    fromJSON(paste0("https://aplans.api.hel.ninja/v1/indicator/",i,"/values/")),
+    error=function(e) return(list()))
+  if(length(tmp)>0) {
+    values <- rbind(
+      values,
+      cbind(
+        Type = "value",
+        Indicator = i,
+        tmp
+      )
+    )
+  }
+}
+
+goals <- data.frame()
+for(i in inds) {
+  tmp <- tryCatch(
+    fromJSON(paste0("https://aplans.api.hel.ninja/v1/indicator/",i,"/goals/")),
+    error=function(e) return(list()))
+  if(length(tmp)>0) {
+    goals <- rbind(
+      goals,
+      cbind(
+        Type  = "goal",
+        Indicator = i,
+        tmp
+      )
+    )
+  }
+}
+
+meta <- data.frame()
+for(i in inds) {
+  tmp <- tryCatch(
+    fromJSON(paste0("https://aplans.api.hel.ninja/v1/indicator/",i,"/")),
+    error=function(e) return(list()))
+  if(length(tmp)>0) {
+    tmp <- unlist(tmp)
+    meta <- rbind(
+      meta,
+      data.frame(
+        Indicator = i,
+        Variable = names(tmp),
+        tmp
+      )
+    )
+  }
+}
+
+meta <- meta[meta$Variable %in% c("name","unit_name","time_resolution") , ]
+
+values <- rbind(values, goals)
+values$date <- as.POSIXct(values$date)
+
+uni <- unique(values[values$Indicator %in% inds , c("Indicator","Type")])
+
+out <- data.frame()
+for(i in 1:nrow(uni)) {
+  tmp <- values[values$Indicator==uni$Indicator[i] & values$Type==uni$Type[i] , ]
+  if(uni$Type[i]=="goal") {
+    tmp <- rbind(
+      tmp,
+      values[values$Indicator==uni$Indicator[i] & values$Type=="value" & 
+           values$date==max(values$date[values$Indicator==uni$Indicator[i] & values$Type=="value"]) , ]
+    )
+    tmp <- data.frame(
+      Indicator = uni$Indicator[i],
+      Type = "tavoite",
+      approx(tmp$date, tmp$value, as.POSIXct(paste0(1990:2035, "-12-31")))
+    )
+    colnames(tmp)[colnames(tmp)=="x"] <- "aika"
+    colnames(tmp)[colnames(tmp)=="y"] <- "päästö"
+  } else {
+    tim <- as.POSIXct(paste0(2008:2035, "-12-31"))
+    emis <- predict(lm(value ~ date, data=tmp[tmp$date>as.POSIXct("2008-01-01") , ]),
+                    data.frame(date=tim))
+    tmp <- data.frame(
+      Indicator = uni$Indicator[i],
+      Type = "mittaus",
+      approx(tmp$date, tmp$value, as.POSIXct(paste0(1990:2035, "-12-31")))
+    )
+    colnames(tmp)[colnames(tmp)=="x"] <- "aika"
+    colnames(tmp)[colnames(tmp)=="y"] <- "päästö"
+    
+    tmp <- rbind(
+      tmp, data.frame(
+        Indicator = tmp$Indicator[i],
+        Type = "tätä menoa",
+        aika = tim,
+        päästö = emis
+      )
+    )
+  }
+  
+  out <- rbind(out, tmp)
+}
+
+val2 <- reshape(meta, idvar = "Indicator", timevar = "Variable",
+                v.names = "tmp", 
+                varying = list(tmp=c("name","unit_name","time_resolution")),
+                direction = "wide")
+out <- merge(out, val2)
+
+out2 <- out[out$Indicator!=5 , ] # Summary indicator must be removed
+out2 <- aggregate(out2["päästö"], by = out2[c("Type","aika","unit_name",
+                                         "time_resolution")], FUN=sum)
+
+out <- rbind(out, cbind(out2, Indicator=999, name="Tavoitteista laskettu"))
+out <- out[!is.na(out$päästö) , , drop=TRUE]
+levels(out$name) <- gsub("kasvihuonekaasupäästöt","", levels(out$name))
+
+```
+
+## Kasvihuonekaasupäästöt sektoreittain
+
+
+```{r pressure, echo=FALSE, fig.width=8, fig.height=6}
+ggplot(out, aes(x=aika, y=päästö, colour=Type))+geom_line(size=1.5)+
+  facet_wrap(~name, scales="free_y")+
+  thlGraphs::thlTheme(base.size = 16, legend.position = "bottom")+
+  labs(title="Kasvihuonekaasupäästöt (kt/a)",y="")
+
+```
+
+Kasvihuonekaasupäästöistä ja päästövähennystavoitteista voidaan tehdä useita päätelmiä.
+
+* Lämmönkulutukselle, jätteidenkäsittelylle, teollisuudelle ja työkoneille sekä maataloudelle ei ole vielä asetettu määrällistä tavoitetta.
+* Näistä maatalous on vähäinen mutta lämmitys erittäin suuri päästölähde.
+* Tavoitteista laskettu -paneeli on suoraan eri päästösektoreiden tiedoista laskettu. Se on mittausten ja trendin osalta sama kuin Helsingin kaupungin (scope 2) -paneeli paitsi tavoiteiden osalta. Jälkimmäisen tavoitekäyrä lähtee suoraan nykyhetken tilanteesta, mutta edellinen lähes 2000 kt/a alempaa. Tämä epäsuhta johtuu siitä, että isolle osalle päästöistä ei ole asetettu vielä vähennystavoitetta.
+* Sähkönkulutuksen 10 vuoden trendi on jyrkemmin laskeva kuin tavoite. Tämä johtuu pääasiassa biopolttoaineen käytön lisääntymisestä, mutta biopolttoaineiden hiilineutraalisuus onasetettu kyseenalaiseksi, ja olisikin tarkemmin kuvattava, millä polttoaineilla sähkö tuotetaan ja mitä ovat niiden päästökertoimet.
+* Kuvassa on periaatteessa mukana scope 3 -päästöt, mutta niistä data ja tavoitteet puuttuvat toistaiseksi kokonaan.
